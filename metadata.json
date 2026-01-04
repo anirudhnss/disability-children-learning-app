@@ -1,0 +1,8 @@
+{
+  "name": "Project Tejas AI",
+  "description": "An advanced AI-powered educational companion for students, featuring object detection, emotion analysis, magic drawing, and speech-based learning tools.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
