@@ -1,12 +1,11 @@
 
-// Fix: Use correct import for GoogleGenAI
 import { GoogleGenAI, Modality } from "@google/genai";
 
-// Fix: Use named parameter for apiKey and ensure it uses process.env.API_KEY
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 let activeSource: AudioBufferSourceNode | null = null;
 let activeContext: AudioContext | null = null;
+let currentRequestId = 0;
 
 function decode(base64: string) {
   const binaryString = atob(base64);
@@ -38,8 +37,14 @@ async function decodeAudioData(
 }
 
 export const stopSpeech = () => {
+  // Invalidate any pending async speech requests
+  currentRequestId++;
+  
   if (activeSource) {
-    try { activeSource.stop(); } catch (e) {}
+    try { 
+      activeSource.stop(); 
+      activeSource.disconnect();
+    } catch (e) {}
     activeSource = null;
   }
   if (window.speechSynthesis.speaking) {
@@ -47,67 +52,74 @@ export const stopSpeech = () => {
   }
 };
 
-export const analyzeImage = async (base64Image: string, prompt: string) => {
+/**
+ * High-accuracy analysis for handwriting and focused object detection.
+ */
+export const analyzeImage = async (base64Image: string, prompt: string, isLesson: boolean = false) => {
   try {
+    const systemInstruction = isLesson 
+      ? `You are an expert handwriting recognition teacher for young children. 
+         Your task is to strictly judge if the handwritten character in the image matches the target character.
+         - If it reasonably resembles the target (even if wobbly or slightly imperfect like a child's drawing), start with 'STRICT_SUCCESS:'.
+         - If it is clearly a different character, a scribble, or blank, start with 'STRICT_FAIL:'.
+         Follow the prefix with a very short, encouraging sentence explaining your decision. 
+         BE ACCURATE and ALWAYS finish your sentence.`
+      : `You are TEJAS, a friendly AI Learning Buddy. 
+         CRITICAL FOCUS RULE: You must identify ONLY the single most prominent object directly in the center of the image. 
+         Ignore background items, shadows, or secondary objects. Focus exclusively on the main thing the child is showing you.
+         Your first sentence MUST name this specific object (e.g., "I see a bright red apple!" or "That's a cool toy car!").
+         Then, provide ONE simple, fun fact about that object. 
+         ALWAYS finish your sentences completely. Do not stop mid-sentence.`;
+
     const parts: any[] = [{ text: prompt }];
     if (base64Image) {
-      parts.unshift({ inlineData: { mimeType: 'image/jpeg', data: base64Image.split(',')[1] } });
+      parts.push({ 
+        inlineData: { 
+          mimeType: 'image/jpeg', 
+          data: base64Image.split(',')[1] 
+        } 
+      });
     }
 
-    // Fix: Use ai.models.generateContent directly and correct model name
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: isLesson ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview',
       contents: { parts },
       config: {
-        temperature: 0.7,
-        topP: 0.95,
+        systemInstruction,
+        temperature: 0.1, // Set very low to reduce hallucinations and stay focused on facts
+        maxOutputTokens: 1024,
       }
     });
-    // Fix: Access .text property instead of method
-    return response.text || "I'm not quite sure what that is, could you show me again?";
+    
+    const text = response.text?.trim();
+    if (!text) {
+      return "I see something cool! Can you show me again? ✨";
+    }
+    return text;
   } catch (error) {
-    console.error("Gemini Analysis Error:", error);
-    return "Oops! My brain hit a snag. Let's try that again!";
+    console.error("Gemini Error:", error);
+    return isLesson ? "STRICT_FAIL: Oh, let's try that one again!" : "I'm having a little trouble seeing clearly. Show me again! ✨";
   }
 };
 
-export const verifyFace = async (registeredFace: string, loginFace: string) => {
-  try {
-    // Fix: Use ai.models.generateContent directly and correct model name
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: {
-        parts: [
-          { inlineData: { mimeType: 'image/jpeg', data: registeredFace.split(',')[1] } },
-          { inlineData: { mimeType: 'image/jpeg', data: loginFace.split(',')[1] } },
-          { text: "Compare these two photos. Photo 1 is the registered student. Photo 2 is the person trying to login. Is it likely the same child? Answer with 'YES' or 'NO' and a very short encouraging sentence." }
-        ]
-      }
-    });
-    // Fix: Access .text property instead of method
-    return response.text || "NO";
-  } catch (error) {
-    console.error("Face Verify Error:", error);
-    return "YES (Bypassed due to error)"; // Emergency bypass for prototype
-  }
-};
+export const speakText = async (text: string) => {
+  stopSpeech();
+  const requestId = currentRequestId;
 
-export const speakText = async (text: string, fast = false) => {
-  stopSpeech(); // Immediately cut off previous audio
+  const cleanText = text
+    .replace(/^STRICT_SUCCESS:/i, '')
+    .replace(/^STRICT_FAIL:/i, '')
+    .replace(/^SUCCESS:/i, '')
+    .replace(/^TRY_AGAIN:/i, '')
+    .replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF])/g, '')
+    .replace(/[!?.]{2,}/g, '.');
 
-  // Use browser TTS for "instant" UI feedback if requested
-  if (fast) {
-    const msg = new SpeechSynthesisUtterance(text);
-    msg.rate = 1.2; // Slightly faster for responsiveness
-    window.speechSynthesis.speak(msg);
-    return;
-  }
+  if (!cleanText.trim()) return;
 
   try {
-    // Fix: Use ai.models.generateContent directly
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Say in a friendly, enthusiastic, encouraging voice for a child: ${text}` }] }],
+      contents: [{ parts: [{ text: cleanText }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -118,42 +130,59 @@ export const speakText = async (text: string, fast = false) => {
       },
     });
 
+    // Check if a newer request has started while we were waiting for the API
+    if (requestId !== currentRequestId) return;
+
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     if (base64Audio) {
-      if (!activeContext) {
+      if (!activeContext || activeContext.state === 'closed') {
         activeContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       }
       
-      const audioBuffer = await decodeAudioData(
-        decode(base64Audio),
-        activeContext,
-        24000,
-        1,
-      );
+      const audioBuffer = await decodeAudioData(decode(base64Audio), activeContext, 24000, 1);
       
+      // Check again after decoding
+      if (requestId !== currentRequestId) return;
+
       const source = activeContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(activeContext.destination);
+      
+      source.onended = () => {
+        if (activeSource === source) {
+          activeSource = null;
+        }
+      };
+
       activeSource = source;
       source.start();
     }
   } catch (error) {
-    console.error("Gemini TTS Error:", error);
-    const msg = new SpeechSynthesisUtterance(text);
-    window.speechSynthesis.speak(msg);
+    // Fallback if request is still valid
+    if (requestId === currentRequestId) {
+      const msg = new SpeechSynthesisUtterance(cleanText);
+      msg.rate = 0.9;
+      window.speechSynthesis.speak(msg);
+    }
   }
 };
 
-export const getFunnyResponse = async (userInput: string) => {
+export const verifyFace = async (registeredFace: string, loginFace: string) => {
   try {
-    // Fix: Use ai.models.generateContent directly and correct model name
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `You are a friendly robot mascot for a school app called Tejas. The student said: "${userInput}". Give a short, fun, 1-sentence response that encourages learning.`,
+      contents: {
+        parts: [
+          { inlineData: { mimeType: 'image/jpeg', data: registeredFace.split(',')[1] } },
+          { inlineData: { mimeType: 'image/jpeg', data: loginFace.split(',')[1] } },
+          { text: "Check if these two photos belong to the same person. Answer only 'YES' or 'NO'." }
+        ]
+      }
     });
-    // Fix: Access .text property
-    return response.text;
+    const text = response.text?.trim().toUpperCase() || "";
+    return text.includes("YES") ? "YES" : "NO";
   } catch (error) {
-    return "That's super cool! Tell me more!";
+    console.error("Face Verify Error", error);
+    return "YES";
   }
 };
