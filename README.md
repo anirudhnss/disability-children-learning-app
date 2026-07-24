@@ -40,6 +40,11 @@ per-student progress tracking (marks, accuracy, time taken, IQ score).
 ### 🧑‍🏫 Educator Dashboard
 A separate educator login for creating lessons, managing exams, and reviewing student reports.
 
+### ✒️ Smart Pen (Hardware)
+A companion smart pen that tracks a child's **pulse rate**, **pressure**, and **blood flow**
+while writing, and responds in real time through a built-in **vibration motor** — giving
+gentle haptic feedback based on the child's physical/emotional state during practice.
+
 ---
 
 ## 🛠️ Tech Stack
@@ -49,6 +54,8 @@ A separate educator login for creating lessons, managing exams, and reviewing st
   - `gemini-3-pro-preview` / `gemini-3-flash-preview` — image/vision analysis & face verification
   - `gemini-2.5-flash-preview-tts` — text-to-speech
 - Browser **camera** + **microphone** access (declared in `metadata.json`)
+- **Smart Pen hardware** — pulse rate, pressure, and blood flow sensors + vibration motor
+  for real-time haptic feedback while writing
 
 ---
 
@@ -90,7 +97,6 @@ metadata.json               # App name/description + camera & mic permissions
 ---
 
 ## 📝 Notes
-
 - Camera and microphone permissions are required for the scanner, face login, and voice features.
 - Designed with accessibility and simplicity in mind — built for young learners and children
   with learning difficulties (ADHD, dyslexia-type writing/speech challenges, and more).
